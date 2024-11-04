@@ -1,4 +1,5 @@
 # %%
+import sklearn.metrics
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,6 +15,44 @@ def reverse_order(j, order):
     for i in range(len(order)):
         if j == order[i]:
             return i
+
+
+# Returns input for ROC_AUC algorithm (probabilistic attempt)
+# to use:
+# give X=ground_truth burst array of booleans
+# give Y=labeler-predicted burst array of booleans
+#
+# Returns [(1 - P(x_i=False | y_i=False), P(x_i=True | y_i=True)]) given boolean lists X,Y
+# OR the algorithm returns an integral Error code.
+#   Code 1: len(X)!=len(Y)
+#   Code 2: X[i] or Y[i] is not boolean
+def probability_correct_selection(X, Y):
+    num_true = 0
+    num_false = 0
+    selected_true = 0
+    selected_false = 0
+
+    if len(X) != len(Y):
+        return 1
+    for i in range(len(X)):
+        xi = X[i]
+        yi = Y[i]
+        if type(xi) != bool or type(yi) != bool:
+            print(type(xi), type(yi))
+            return 2
+        if xi:
+            num_true += 1
+            if yi:
+                selected_true += 1
+        else:
+            num_false += 1
+            if not yi:
+                selected_false += 1
+
+    P_0 = float(selected_false)/float(num_false)
+    P_1 = float(selected_true)/float(num_true)
+
+    return [1-P_0, P_1]
 
 
 # Load data
@@ -53,17 +92,25 @@ y_pred and y_true are variables for auc_roc
 '''
 
 # initial values to allow for averaging or single perrson burst selections
-y_pred = [[0,0]]*len(ground_truth)
+y_pred = [[0, 0]]*len(ground_truth)
 num_pred = 0
 
 # def find_overlap_intervals(selection_0, selection_1):
-    
+
 # Here we do not have burst labeling code because humans labeled the signals on a study labeling platform
 
 # %%
 
-import sklearn.metrics
+num_classes = 2
+# to index: probability_pairs[labeler_index][signal_index]
+probability_pairs = np.empty(
+    (len(ground_truth), len(who), num_classes), dtype=object)
+ground_truths = np.empty(
+    (len(ground_truth), len(who), num_classes), dtype=object)
 
+for i in range(0, len(ground_truth)):
+    for j in range(0, len(who)):
+        ground_truths[i][j][0:2] = [0, 1]
 
 for i in range(len(ground_truth)):
 
@@ -74,11 +121,7 @@ for i in range(len(ground_truth)):
         selections = np.array(results["selections"][who[j]]["selections"])
         reverse_search_sig_idx = reverse_order(i + num_real_sigs, order)
         selections_indexed_by_labeler = selections[reverse_search_sig_idx]
-        # order: tp, fp, tn, fn
-        print(i)
-        print(order[i])
-        print(selections[order[i]])
-        print(ground_truth[i])
+
         curr_sig_idx = i+num_real_sigs
         eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
             i+num_real_sigs)]
@@ -92,34 +135,40 @@ for i in range(len(ground_truth)):
         plt.axvspan(ground_truth[i][0],
                     ground_truth[i][1], color='blue', alpha=0.5)
 
-        overlap = 0
-        start_overlap = max(
-            selections_indexed_by_labeler[0], ground_truth[i][0])
-        end_overlap = min(selections_indexed_by_labeler[1], ground_truth[i][1])
-        if start_overlap < end_overlap:
-            overlap = end_overlap-start_overlap
+        y_true_boolean = [False]*len_curr_sig
+        for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
+            y_true_boolean[subIndex] = True
 
-        y_pred[i][0] += selections_indexed_by_labeler[0]
-        y_pred[i][1] += selections_indexed_by_labeler[1]
-    y_pred[i][0]/=len(who)
-    y_pred[i][1]/=len(who)
+        y_pred_boolean = [False]*len_curr_sig
+        for subIndex in range(selections_indexed_by_labeler[0], selections_indexed_by_labeler[1]+1):
+            y_pred_boolean[subIndex] = True
 
-sklearn.metrics.roc_auc_score(y_true=ground_truth, y_score=y_pred)
-plt.show()
-selections = selections[np.argsort(order)[49:]]
+        y_pred_prob = probability_correct_selection(
+            y_true_boolean, y_pred_boolean)
+        # print(type(y_pred_prob))
+        if type(y_pred_prob) == int:
+            print(y_pred_prob)
+            print("review code: the stats function should not have bombed.")
+            exit(3)
+        
 
-for i in range(50):
-    plt.close(i)
+        probability_pairs[i][j] = y_pred_prob[0]
+        # y_true = [0, 1]
 
-# This needs to be updated for AUC-ROC and AUC-PR instead
-error[ind] = (selections - ground_truth)
-
-# MAE Results
-who = [" ".join(i.split("@")[0].split("_")[0].split(" ")[:2])
-       for i in list(results["selections"].keys())]
-
-abs_error = np.abs(error)
-
-dict(zip(who, abs_error.mean(axis=(1, 2))))
+        # score = sklearn.metrics.roc_auc_score(y_true=y_true, y_score=y_pred_prob)
+        # print(y_true)
+        # print(y_pred_prob)
+        # print(score)
 
 
+# we want subarray=ground_truths[:][0][0]
+
+gt_roc=ground_truths[:,0,0]
+pred_roc =y_score=probability_pairs[:,0,0]
+
+print(gt_roc.shape)
+score = sklearn.metrics.roc_auc_score(
+     )
+# print(ground_truths[0][:][0])
+# print(y_pred_prob[0][:][0])
+print(score)

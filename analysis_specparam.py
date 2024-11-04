@@ -151,33 +151,33 @@ for i in range(len(ground_truth)):
 
 import sklearn.metrics
 
-
+# to index: probability_pairs[labeler_index][signal_index]
+roc_scores = np.empty(
+    (len(ground_truth)), dtype=object)
 for i in range(len(ground_truth)):
     plt.figure("figure "+str(i))
 
     selections_indexed_by_labeler = y_pred[i]
     is_burst = detect_bursts_dual_threshold(sig=np.array(
         eeg_signal_profiled_in_this_loop), fs=fs, f_range=(9, 21), dual_thresh=(1, 2))
+    
+    y_true_boolean = [False]*len_curr_sig
+    for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
+        y_true_boolean[subIndex] = True
+
     curr_sig_idx = i+num_real_sigs
     eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
         i+num_real_sigs)]
     len_curr_sig = len(eeg_signal_profiled_in_this_loop)
 
+    yt_int = np.array(y_true_boolean).astype(int)
+    yp_int =np.array(is_burst).astype(int)
     
-    plot_bursts(np.linspace(0, 1, 1000), eeg_signal_profiled_in_this_loop, is_burst)
-    
-    print(str(selections_indexed_by_labeler[0]) + " vs " + str(ground_truth[i][0]))
-    plt.axvspan(ground_truth[i][0]/1000,
-                ground_truth[i][1]/1000, color='blue', alpha=0.5)
 
-    overlap = 0
-    start_overlap = max(
-        selections_indexed_by_labeler[0], ground_truth[i][0])
-    end_overlap = min(selections_indexed_by_labeler[1], ground_truth[i][1])
-    if start_overlap < end_overlap:
-        overlap = end_overlap-start_overlap
+    score = sklearn.metrics.roc_auc_score(y_true=yt_int, y_score=yp_int)
 
-    y_pred[i] = (selections_indexed_by_labeler[0],selections_indexed_by_labeler[1])
+    roc_scores[i]=score
+
 
 
 # %%
