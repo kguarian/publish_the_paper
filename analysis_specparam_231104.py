@@ -17,7 +17,7 @@ import itertools
 
 # %%
 
-from math import nan
+from math import nan, isfinite
 from numpy import ndarray
 
 
@@ -118,6 +118,7 @@ from sklearn.isotonic import spearmanr
 y_pred: list[tuple[int,int]] = [None]*len(ground_truth)
 num_pred = 0
 
+center_freq_bandwidth_memoization = [None]*len(ground_truth)
 for i in range(len(ground_truth)):
     # Here we have code to execute the burst labeling.
     test_signal = results['sigs']['sig_'+str(i + num_real_sigs)]
@@ -129,6 +130,7 @@ for i in range(len(ground_truth)):
     [center_frequency, log_power, bandwidth] = specparam.analysis.get_band_peak(
         sm, [10, 20], select_highest=True)
     print(center_frequency)
+    center_freq_bandwidth_memoization[i] = [center_frequency, bandwidth]
 
     is_burst = detect_bursts_dual_threshold(sig=np.array(
         test_signal), fs=fs, f_range=(9, 21), dual_thresh=(1, 2))
@@ -158,13 +160,18 @@ roc_scores = np.empty(
 for i in range(len(ground_truth)):
     plt.figure("figure "+str(i))
     curr_sig_idx = i+num_real_sigs
-
+    center_frequency = center_freq_bandwidth_memoization[i][0]
+    bandwidth = center_freq_bandwidth_memoization[i][1]
     eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
         i+num_real_sigs)]
     len_curr_sig = len(eeg_signal_profiled_in_this_loop)
     selections_indexed_by_labeler = y_pred[i]
-    is_burst = detect_bursts_dual_threshold(sig=np.array(
-        eeg_signal_profiled_in_this_loop), fs=fs, f_range=(9, 21), dual_thresh=(1, 2))
+    if isfinite(bandwidth) and isfinite(center_frequency):
+        print("cf, bandwidth = ", center_frequency, bandwidth)
+        is_burst = detect_bursts_dual_threshold(sig=np.array(
+            eeg_signal_profiled_in_this_loop), fs=fs, f_range=(center_frequency-bandwidth, center_frequency+bandwidth), dual_thresh=(1, 2))
+    else:
+        is_burst=[False]*len(eeg_signal_profiled_in_this_loop)
     
     y_true_boolean = [False]*len_curr_sig
     for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
