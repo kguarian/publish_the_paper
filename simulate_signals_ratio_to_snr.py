@@ -94,4 +94,5 @@ for j in range(n_linreg_cycles):
 
     
 print(linreg_slope_list.mean(), linreg_intercept_list.mean())
+
 # funciton is approx snr = -19.65(_ratio) + 9.668
