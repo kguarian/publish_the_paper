@@ -118,6 +118,7 @@ from sklearn.isotonic import spearmanr
 y_pred: list[tuple[int,int]] = [None]*len(ground_truth)
 num_pred = 0
 
+# should memeoize every neurodsp function so the ROC score loop (loop below this one) runs blazingly fast.
 center_freq_bandwidth_memoization = [None]*len(ground_truth)
 for i in range(len(ground_truth)):
     # Here we have code to execute the burst labeling.
@@ -147,14 +148,13 @@ for i in range(len(ground_truth)):
         y_pred[i]=(intervals[0][0], intervals[0][1])
     print(y_pred[i])
 
-# sm.fit(freqs = freqs, power_spectrum = power_spectral_density, freq_range=[1.4,15.0])
-# sm.report(freqs, power_spectrum=power_spectral_density, freq_range=[1.4,15.0])
 
 # %%
 
 import sklearn.metrics
 
-# to index: probability_pairs[labeler_index][signal_index]
+
+# should memeoize every neurodsp function so the ROC score loop (loop below this one) runs blazingly fast.
 roc_scores = np.empty(
     (len(ground_truth)), dtype=object)
 for i in range(len(ground_truth)):

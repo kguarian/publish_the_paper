@@ -4,6 +4,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import sklearn
+from math import ceil
 
 
 # %%
@@ -77,7 +78,7 @@ result_element = results["selections"][who[0]]
 # Performance:
 error = np.zeros((len(who), 50, 2))
 
-print("name is %s" % name)
+# print("name is %s" % name)
 # the i'th element of `order` is the index in signals, corresponding to the i'th signal the labeler saw.
 order = np.array(results["selections"][name]['indices'])
 
@@ -108,67 +109,64 @@ probability_pairs = np.empty(
 ground_truths = np.empty(
     (len(ground_truth), len(who), num_classes), dtype=object)
 
+round_robin_array = np.zeros(
+    (len(ground_truth), len(results['sigs']['sig_'+str(0)])))
+y_true = np.zeros(
+    (len(ground_truth), len(results['sigs']['sig_'+str(0)])))
+scores=np.zeros(len(ground_truth))
+
 for i in range(0, len(ground_truth)):
     for j in range(0, len(who)):
         ground_truths[i][j][0:2] = [0, 1]
 
+# iterates through each signal
 for i in range(len(ground_truth)):
-
-    plt.figure("figure "+str(i))
-
+    curr_sig_idx = i+num_real_sigs
+    eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
+        i+num_real_sigs)]
+    
+    # iterates through each human labeler
     for j in range(len(who)):
         order = np.array(results["selections"][who[j]]['indices'])
         selections = np.array(results["selections"][who[j]]["selections"])
         reverse_search_sig_idx = reverse_order(i + num_real_sigs, order)
         selections_indexed_by_labeler = selections[reverse_search_sig_idx]
 
-        curr_sig_idx = i+num_real_sigs
-        eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
-            i+num_real_sigs)]
         len_curr_sig = len(eeg_signal_profiled_in_this_loop)
 
-        plt.subplot(len(who), 1, j+1)
-        plt.plot(np.linspace(0, len_curr_sig, len_curr_sig),
-                 eeg_signal_profiled_in_this_loop)
-        plt.axvspan(
-            selections_indexed_by_labeler[0], selections_indexed_by_labeler[1], color='red', alpha=0.5)
-        plt.axvspan(ground_truth[i][0],
-                    ground_truth[i][1], color='blue', alpha=0.5)
-
-        y_true_boolean = [False]*len_curr_sig
-        for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
-            y_true_boolean[subIndex] = True
+        if j==0:
+            for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
+                y_true[i][subIndex] = 1
 
         y_pred_boolean = [False]*len_curr_sig
         for subIndex in range(selections_indexed_by_labeler[0], selections_indexed_by_labeler[1]+1):
-            y_pred_boolean[subIndex] = True
+            round_robin_array[i][subIndex] += 1
 
-        y_pred_prob = probability_correct_selection(
-            y_true_boolean, y_pred_boolean)
-        # print(type(y_pred_prob))
-        if type(y_pred_prob) == int:
-            print(y_pred_prob)
-            print("review code: the stats function should not have bombed.")
-            exit(3)
-        
+    
 
-        probability_pairs[i][j] = y_pred_prob[0]
-        # y_true = [0, 1]
+    consensus_threshold = ceil(len(who)/float(2))
+    for k in range(len(eeg_signal_profiled_in_this_loop)):
+        round_robin_array[i][k] = 1 if round_robin_array[i][k] >= consensus_threshold else 0
 
-        # score = sklearn.metrics.roc_auc_score(y_true=y_true, y_score=y_pred_prob)
-        # print(y_true)
-        # print(y_pred_prob)
-        # print(score)
+    scores[i]=sklearn.metrics.f1_score(y_true=y_true[i], y_pred = round_robin_array[i])
+
+plt.figure("f1 scores aggregated")
+plt.boxplot(scores)
+plt.show()
+plt.close()
+
+
+
 
 
 # we want subarray=ground_truths[:][0][0]
 
-gt_roc=ground_truths[:,0,0]
-pred_roc =y_score=probability_pairs[:,0,0]
+# gt_roc=ground_truths[:,0,0]
+# pred_roc =y_score=probability_pairs[:,0,0]
 
-print(gt_roc.shape)
-score = sklearn.metrics.roc_auc_score(
-     )
+# print(gt_roc.shape)
+# score = sklearn.metrics.roc_auc_score(
+#      )
 # print(ground_truths[0][:][0])
 # print(y_pred_prob[0][:][0])
-print(score)
+# print(score)
