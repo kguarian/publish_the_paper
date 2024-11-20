@@ -1,71 +1,34 @@
 # %%
-from re import sub
+# %%
 from statistics import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn import linear_model
 import sklearn.metrics
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-import sklearn
-import seaborn as sns
+from math import ceil
 
+import sklearn
 from sklearn.svm import SVR
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MinMaxScaler
 from scipy import stats
-from sklearn.model_selection import train_test_split
-
-from sklearn import linear_model
-
-
 # %%
 
+# this is the number of real recorded EEG signal we used in the study platform we hosted. The signals were arranged in (real signals, simulated signals) order. Thus, num_real_sigs is used as an array offset in this analysis.
 num_real_sigs = 49
+
+# the simulated signals were presented in randomized order to each human labeler. The ordering was recorded as a list of indices.
+# the selections the labelers made were recorded in the order they were selected.
+# This function finds the index at which the desired signal index appears in the ordering of signal indices.
 
 
 def reverse_order(j, order):
     for i in range(len(order)):
         if j == order[i]:
             return i
-
-
-# Returns input for ROC_AUC algorithm (probabilistic attempt)
-# to use:
-# give X=ground_truth burst array of booleans
-# give Y=labeler-predicted burst array of booleans
-#
-# Returns [(1 - P(x_i=False | y_i=False), P(x_i=True | y_i=True)]) given boolean lists X,Y
-# OR the algorithm returns an integral Error code.
-#   Code 1: len(X)!=len(Y)
-#   Code 2: X[i] or Y[i] is not boolean
-def probability_correct_selection(X, Y):
-    num_true = 0
-    num_false = 0
-    selected_true = 0
-    selected_false = 0
-
-    if len(X) != len(Y):
-        return 1
-    for i in range(len(X)):
-        xi = X[i]
-        yi = Y[i]
-        if type(xi) != bool or type(yi) != bool:
-            print(type(xi), type(yi))
-            return 2
-        if xi:
-            num_true += 1
-            if yi:
-                selected_true += 1
-        else:
-            num_false += 1
-            if not yi:
-                selected_false += 1
-
-    P_0 = float(selected_false)/float(num_false)
-    P_1 = float(selected_true)/float(num_true)
-
-    return [1-P_0, P_1]
-
 
 
 def ratio_to_snr_converter(_ratio):
@@ -110,34 +73,22 @@ def param_list_to_training_data(param_list):
         retArray[i][0:num_features] = row[:num_features]
     return retArray
 
-# Load data
+
+# Load data from results json exported from firebase
 with open("./voyteklabstudy-default-rtdb-export.json") as f:
     results = json.load(f)
 
 
-# %%
-
 # ground truth has shape (num_participants,2)
-# it shows the correct bursting classification
+# it shows the correct bursting classification.
+# ground_truth[i] = [a,b] where a is true burst onset and b is true burst offset.
 ground_truth = np.array(results["ground_truth"])
 
 # List of names of human collaborators who labeled data
-# length of which gives us number of labelings
+# length of which gives us number of labelings. Allows us to iterate through labelers
 who = list(results["selections"].keys())
-print(type(who))
-name = who[0]
+print(who)
 
-result_element = results["selections"][who[0]]
-
-# Performance:
-error = np.zeros((len(who), 50, 2))
-
-print("name is %s" % name)
-# the i'th element of `order` is the index in signals, corresponding to the i'th signal the labeler saw.
-order = np.array(results["selections"][name]['indices'])
-
-
-# %%
 '''
 y_pred and y_true are variables for auc_roc
   we want to analyze humans as a whole.
@@ -146,57 +97,101 @@ y_pred and y_true are variables for auc_roc
 
 '''
 
-# initial values to allow for averaging or single perrson burst selections
-y_pred = [[0, 0]]*len(ground_truth)
-num_pred = 0
-
-# def find_overlap_intervals(selection_0, selection_1):
 
 # Here we do not have burst labeling code because humans labeled the signals on a study labeling platform
 
-# %%
+# the classes are "bursting" and "non-bursting"
+num_classes = 2
+
 y_pred = np.zeros(
     (len(ground_truth), len(results['sigs']['sig_'+str(0)])))
-
 y_true = np.zeros(
     (len(ground_truth), len(results['sigs']['sig_'+str(0)])))
+scores = np.zeros(len(ground_truth))
 
-scores= np.zeros(len(ground_truth))
 
-for i in range(len(ground_truth)):
+# %%
 
-    curr_sig_idx = i+num_real_sigs
-    eeg_signal_profiled_in_this_loop = results['sigs']['sig_'+str(
-        i+num_real_sigs)]
-    
-    for j in range(len(who)):
-        order = np.array(results["selections"][who[j]]['indices'])
-        selections = np.array(results["selections"][who[j]]["selections"])
-        reverse_search_sig_idx = reverse_order(i + num_real_sigs, order)
+# iterates through each signal to create the y_pred[i] for signal i.
+for ground_truth_signal_index in range(len(ground_truth)):
+    signal_index = ground_truth_signal_index+num_real_sigs
+    signal = results['sigs']['sig_'+str(
+        ground_truth_signal_index+num_real_sigs)]
+
+    # this loop records the quantity of labelers who each timepoint in signal i as bursting
+    for labeler_index in range(len(who)):
+        order = np.array(results["selections"][who[labeler_index]]['indices'])
+        selections = np.array(
+            results["selections"][who[labeler_index]]["selections"])
+
+        # this block retrieves the signal selections that labeler j made on signal i.
+        # then assigns this value to selections_indexed_by_labeler.
+        reverse_search_sig_idx = reverse_order(
+            ground_truth_signal_index + num_real_sigs, order)
         selections_indexed_by_labeler = selections[reverse_search_sig_idx]
 
-        len_curr_sig = len(eeg_signal_profiled_in_this_loop)
+        len_curr_sig = len(signal)
 
-        y_true_boolean = [False]*len_curr_sig
-        if j == 0:
-            for subIndex in range(ground_truth[i][0], ground_truth[i][1]+1):
-                y_true[i][subIndex] = 1
+        # records ground truth for signal i in y_true[i].
+        # The j==0 condition ensures that y_true isn't set repetitively.
+        if labeler_index == 0:
+            for time_point in range(ground_truth[ground_truth_signal_index][0], ground_truth[ground_truth_signal_index][1]+1):
+                y_true[ground_truth_signal_index][time_point] = 1
 
-        for subIndex in range(selections_indexed_by_labeler[0], selections_indexed_by_labeler[1]+1):
-            y_pred[i][subIndex] += 1
+        for time_point in range(selections_indexed_by_labeler[0], selections_indexed_by_labeler[1]+1):
+            # IN CONTEXT OF ALL ENCLOSING LOOPS, this line counts the number of people
+            # who labeled this timepoint as containing a burst,
+            # for all timepoints, labelers, and signals
+            y_pred[ground_truth_signal_index][time_point] += 1
 
-    for subindex in range(0, len(eeg_signal_profiled_in_this_loop)):
-        y_pred[i][subIndex] /= len(who)
+    consensus_threshold = ceil(len(who)/float(2))
+    for timepoint in range(len(signal)):
+        y_pred[ground_truth_signal_index][timepoint] = 1 if y_pred[ground_truth_signal_index][timepoint] >= consensus_threshold else 0
 
-    scores[i] = sklearn.metrics.roc_auc_score(y_true=y_true[i], y_score=y_pred[i])
+    scores[ground_truth_signal_index] = sklearn.metrics.f1_score(
+        y_true=y_true[ground_truth_signal_index], y_pred=y_pred[ground_truth_signal_index])
 
-plt.figure("roc scores aggregated")
-plt.boxplot(scores)
-plt.show()
-plt.close
+# plt.figure("f1 scores aggregated")
+# plt.boxplot(scores)
+# plt.show()
 
 
-# snr = -19.65(_ratio) + 9.668
+# %%
+
+# identify the really bad signal.
+max_val, bad_score_index = 1.0, -1
+for ground_truth_signal_index in range(len(ground_truth)):
+    if scores[ground_truth_signal_index] < max_val:
+        max_val = scores[ground_truth_signal_index]
+        bad_score_index = ground_truth_signal_index
+
+print("worst f1 score:", scores[bad_score_index], "index", bad_score_index)
+params = results["params"][bad_score_index]
+print("raw params: %s" % str(params))
+params = decode_params(params)
+print("decoded params: %s" % params)
+
+sig_bad_perf = results['sigs']['sig_'+str(
+    bad_score_index+num_real_sigs)]
+# this loop records the quantity of labelers who each timepoint in signal i as bursting
+for labeler_index in range(len(who)):
+    order = np.array(results["selections"][who[labeler_index]]['indices'])
+    selections = np.array(results["selections"]
+                          [who[labeler_index]]["selections"])
+
+    # this block retrieves the signal selections that labeler j made on signal i.
+    # then assigns this value to selections_indexed_by_labeler.
+    reverse_search_sig_idx = reverse_order(
+        bad_score_index + num_real_sigs, order)
+    selections_indexed_by_labeler = selections[reverse_search_sig_idx]
+
+    plt.subplot(len(who), 1, labeler_index+1)
+    plt.plot(np.linspace(0, len_curr_sig, len_curr_sig),
+             sig_bad_perf)
+    plt.axvspan(
+        selections_indexed_by_labeler[0], selections_indexed_by_labeler[1], color='red', alpha=0.5)
+    plt.axvspan(ground_truth[bad_score_index][0],
+                ground_truth[bad_score_index][1], color='blue', alpha=0.5)
 
 # %% [markdown]
 # multivariate linear regression
@@ -271,10 +266,6 @@ pipe4 = make_pipeline(StandardScaler(), SVR(kernel="poly", C=100, gamma="auto", 
 pipe4.fit(X_train, y_train)  # apply scaling on training data
 print(pipe4.score(X_test, y_test))
 
-pipe5 = make_pipeline(MinMaxScaler(), linear_model.LinearRegression())
-pipe5.fit(X_train, y_train)  # apply scaling on training data
-print("last x2", pipe5.score(X_test, y_test))
-
 
 # removing outliers.
 score_copy = np.array(scores)
@@ -336,9 +327,3 @@ print("last", pipe4.score(X_test_out, y_test_out))
 pipe4 = make_pipeline(MinMaxScaler(), SVR(kernel="poly", C=1, gamma="auto", degree=3))
 pipe4.fit(X_train_out, y_train_out)  # apply scaling on training data
 print("last", pipe4.score(X_test_out, y_test_out))
-
-pipe5 = make_pipeline(MinMaxScaler(), linear_model.LinearRegression())
-pipe5.fit(X_train_out, y_train_out)  # apply scaling on training data
-print("last x2", pipe5.score(X_test_out, y_test_out))
-
-
