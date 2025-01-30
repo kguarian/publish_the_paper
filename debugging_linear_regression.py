@@ -326,4 +326,5 @@ print("last", pipe4.score(X_test_out, y_test_out))
 
 pipe4 = make_pipeline(MinMaxScaler(), SVR(kernel="poly", C=1, gamma="auto", degree=3))
 pipe4.fit(X_train_out, y_train_out)  # apply scaling on training data
+
 print("last", pipe4.score(X_test_out, y_test_out))
