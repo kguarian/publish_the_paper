@@ -147,6 +147,47 @@ def create_signal_images(signal_data, output_directory):
         print(f"Saved cropped signal image to: {filepath}")
 
 
+# be very sure to keep a copy of the original list
+def merge_yolo_burst_detections(detections_for_signal):
+    """
+    (Mutates Parameters): Process YOLO burst detections to extract and average onsets and offsets.
+    for each burst, the function calculates the average onset and offset times.
+
+    Parameters:
+        burst_detections list with length i: A list of (onset,offset) pairs
+    Returns:
+        Nothing
+    """
+
+    if len(detections_for_signal)==0:
+        return []
+    
+    # Sort intervals by start time
+    sorted_intervals = sorted(detections_for_signal, key=lambda x: x[0])
+
+    # naive solution, O(n) runtime. Good.
+    combine_table = np.full(len(detections_for_signal) - 1, False)
+    len_table = len(combine_table)
+    for i in range(len_table):
+        last_end = detections_for_signal[i][1]
+        next_start = detections_for_signal[i + 1][0]
+        if next_start < last_end:
+            combine_table[i] = True
+        # we want to do longest common interval, for each interval in the set. So we want to take each interval out of the bag at some point.
+
+    for i in range(len_table):
+        if combine_table[len_table - i - 1]:
+            detections_for_signal[len_table - i - 2][0] = min(
+                detections_for_signal[len_table - i - 1][1],
+                detections_for_signal[len_table - i - 2][0],
+            )
+            detections_for_signal[len_table - i - 2][1] = max(
+                detections_for_signal[len_table - i - 1][1],
+                detections_for_signal[len_table - i - 2][1],
+            )
+            detections_for_signal.pop(len_table - i - 1)
+
+
 # %% [markdown]
 # Import File Data
 
@@ -185,12 +226,14 @@ y_true = np.zeros((num_real_sigs, len(results["sigs"]["sig_" + str(0)])))
 num_classes = 2
 
 
-threshold = 0.7
+threshold = 0.2
 
 onsets = np.zeros(num_real_sigs)
 offsets = np.zeros(num_real_sigs)
 
-# Here we want to find the average selection onset and offset. We can handle outliers and such later -- now we need to scaffold.
+human_selections=[None]*num_real_sigs
+for i in range(num_real_sigs):
+    human_selections[i]=[]
 for curr_sig_idx in range(num_real_sigs):
     eeg_signal_profiled_in_this_loop = results["sigs"]["sig_" + str(curr_sig_idx)]
     no_labels = 0
@@ -209,9 +252,13 @@ for curr_sig_idx in range(num_real_sigs):
             print("nosel made")
             no_labels += 1
 
-    onsets[curr_sig_idx] = onsets[curr_sig_idx] / (len(who)-no_labels)
-    offsets[curr_sig_idx] = offsets[curr_sig_idx] / (len(who)-no_labels)
+        human_selections[curr_sig_idx].append([selections_indexed_by_labeler[0],selections_indexed_by_labeler[1]])
 
+    merge_yolo_burst_detections(human_selections[curr_sig_idx])
+        
+
+    onsets[curr_sig_idx] = onsets[curr_sig_idx] / (len(who) - no_labels)
+    offsets[curr_sig_idx] = offsets[curr_sig_idx] / (len(who) - no_labels)
 
 
 print(onsets)
@@ -254,15 +301,17 @@ annotated_images = []
 for i in range(len(all_images)):
     image_path = all_images[i]
     # Predict results for the image
-    results = model.predict(source=image_path, conf=0.7)
+    results = model.predict(source=image_path, conf=0.25)
 
     # Load the image using PIL
     image = Image.open(image_path).convert("RGB")
     draw = ImageDraw.Draw(image)
-
     # Process model predictions
+
+    yolo_intervals = []
     for r in results:
-        for box in r.boxes.data:
+        for j in range(len(r.boxes.data)):
+            box = r.boxes.data[j]
             # Extract bounding box and class information
             x1, y1, x2, y2, confidence, class_id = box.tolist()
             class_name = model.names[
@@ -272,29 +321,64 @@ for i in range(len(all_images)):
                 print(f"box bounds: {x1}, {x2}")
                 pred_onsets[i] = x1
                 pred_offsets[i] = x2
+                yolo_intervals.append([x1, x2])
 
-            # Draw the bounding box
-            draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
-            draw.rectangle([x1, y1, x2, y2], outline="green", width=3)
+    merge_yolo_burst_detections(yolo_intervals)
 
-            # Create a label
-            label = f"{class_name} ({confidence:.2f})"
+    print(f"signal {i}")
+    for j in range(len(yolo_intervals)):
+        print(yolo_intervals[j])
+        draw.rectangle(
+            [yolo_intervals[j][0], y1, yolo_intervals[j][1], y2],
+            outline="red",
+            width=3,
+        )
 
-            # Draw label inside the bounding box
-            text_bbox = draw.textbbox((x1, y1), label, font=font)
-            text_width = text_bbox[2] - text_bbox[0]
-            text_height = text_bbox[3] - text_bbox[1]
+        # Create a label
+        label = f"{class_name} ({confidence:.2f})"
 
-            # Position text inside the bounding box, adjusted to fit
-            label_x = max(x1, 0) + 2
-            label_y = max(y1, 0) + 2
+        # Draw label inside the bounding box
+        text_bbox = draw.textbbox((yolo_intervals[j][0], y1), label, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
 
-            # Draw label background and text
-            draw.rectangle(
-                [label_x, label_y, label_x + text_width, label_y + text_height],
-                fill="red",
-            )
-            draw.text((label_x, label_y), label, fill="white", font=font)
+        # Position text inside the bounding box, adjusted to fit
+        label_x = yolo_intervals[j][0]
+        label_y = max(y1, 0) + 2
+
+        # Draw label background and text
+        draw.rectangle(
+            [label_x, label_y, label_x + text_width, label_y + text_height],
+            fill="red",
+        )
+        draw.text((label_x, label_y), label, fill="white", font=font)
+
+    for j in range(len(human_selections[i])):
+        print(human_selections[i][j])
+        draw.rectangle(
+            [human_selections[i][j][0], y1, human_selections[i][j][1], y2],
+            outline="blue",
+            width=3,
+        )
+
+        # Create a label
+        label = f"human selection"
+
+        # Draw label inside the bounding box
+        text_bbox = draw.textbbox((human_selections[i][j][0], y1), label, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        # Position text inside the bounding box, adjusted to fit
+        label_x = human_selections[i][j][0]
+        label_y = max(y1, 0) + 2
+
+        # Draw label background and text
+        draw.rectangle(
+            [label_x, label_y, label_x + text_width, label_y + text_height],
+            fill="blue",
+        )
+        draw.text((label_x, label_y), label, fill="white", font=font)
 
     # Add a black border around the image
     border_size = 5
@@ -311,7 +395,7 @@ for i in range(len(all_images)):
 
 # Determine collage dimensions
 collage_width = 910  # Each image's width
-collage_images_per_row = 10  # Number of images per row
+collage_images_per_row = 3  # Number of images per row
 collage_rows = ceil(len(annotated_images) / collage_images_per_row)
 collage_height = collage_rows * 100  # 100 pixels per image height
 
@@ -331,7 +415,7 @@ for i, annotated_image in enumerate(annotated_images):
 # Save the collage
 collage.save(output_collage)
 print(f"Collage saved to {output_collage}")
-collage.show()
+# collage.show()
 
 print("onsets", onsets)
 print("predicted onsets", onsets)
@@ -341,11 +425,22 @@ print("predicted offsets", offsets)
 print("average onset error", np.mean(onsets - pred_onsets))
 print("average offset error", np.mean(offsets - pred_offsets))
 
-for i in range(len(onsets)):
-    print(f"real vs predicted onset for signal {onsets[i]} vs {pred_onsets[i]}")
-    print(f"real vs predicted offset for signal {offsets[i]} vs {pred_offsets[i]}")
-    print(f"diff between onsets for signal {i}: {onsets[i] - pred_onsets[i]}")
-    print(f"diff between offsets for signal {i}: {offsets[i] - pred_offsets[i]}")
-    print() # newline
+diff_on = np.zeros(len(offsets))
+diff_off = np.zeros(len(offsets))
 
+for i in range(len(onsets)):
+    print(i)
+    print(f"human vs predicted onset for signal {[x[0] for x in human_selections[i][:]]} vs {pred_onsets[i]}")
+    print(f"human vs predicted offset for signal {[x[0] for x in human_selections[i][:]]} vs {pred_offsets[i]}")
+    print(f"diff between onsets for signal {i}: {[x[1] for x in human_selections[i][:] - pred_onsets[i]]}")
+    print(f"diff between offsets for signal {i}: {[x[1] for x in human_selections[i][:] - pred_offsets[i]]}")
+    print()  # newline
+    
+    if i==31:
+        continue
+    diff_on[i] = min(np.abs([x[0] for x in human_selections[i][:]] - pred_onsets[i]))
+    diff_off[i] = min(np.abs([x[0] for x in human_selections[i][:]] - pred_offsets[i]))
+
+print(f"average diff onsets: {np.mean(diff_on)}")
+print(f"average diff offsets: {np.mean(diff_off)}")
 # print("average onset error, not counting missed onsets", np.mean(onsets[onsets > 0] - onsets[onsets > 0]))
