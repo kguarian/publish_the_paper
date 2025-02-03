@@ -444,3 +444,15 @@ for i in range(len(onsets)):
 print(f"average diff onsets: {np.mean(diff_on)}")
 print(f"average diff offsets: {np.mean(diff_off)}")
 # print("average onset error, not counting missed onsets", np.mean(onsets[onsets > 0] - onsets[onsets > 0]))
+
+num_human_selections = np.zeros(num_real_sigs)
+for i in range(num_real_sigs):
+    num_human_selections[i] = float(len(human_selections[i]))
+
+num_yolo_selections = np.zeros(num_real_sigs)
+for i in range(num_real_sigs):
+    num_yolo_selections[i] = float(len(yolo_intervals))
+
+print(f"num human selections: {num_human_selections}")
+print(f"num yolo selections: {num_yolo_selections}")
+print(f"human vs yolo: {num_human_selections/num_yolo_selections}")
