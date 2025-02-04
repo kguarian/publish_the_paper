@@ -147,8 +147,8 @@ def create_signal_images(signal_data, output_directory):
         print(f"Saved cropped signal image to: {filepath}")
 
 
-# be very sure to keep a copy of the original list
-def merge_yolo_burst_detections(detections_for_signal):
+
+def merge_burst_selections(detections_for_signal):
     """
     (Mutates Parameters): Process YOLO burst detections to extract and average onsets and offsets.
     for each burst, the function calculates the average onset and offset times.
@@ -159,33 +159,34 @@ def merge_yolo_burst_detections(detections_for_signal):
         Nothing
     """
 
+    # Sort intervals by start time
+    detections_for_signal.sort(key=lambda x: x[0])
+
     if len(detections_for_signal)==0:
         return []
-    
-    # Sort intervals by start time
-    sorted_intervals = sorted(detections_for_signal, key=lambda x: x[0])
-
     # naive solution, O(n) runtime. Good.
     combine_table = np.full(len(detections_for_signal) - 1, False)
     len_table = len(combine_table)
     for i in range(len_table):
+        last_start = detections_for_signal[i][0]
         last_end = detections_for_signal[i][1]
         next_start = detections_for_signal[i + 1][0]
-        if next_start < last_end:
+        next_end = detections_for_signal[i+1][1]
+        if next_start <= last_end or last_start <= next_end:
             combine_table[i] = True
-        # we want to do longest common interval, for each interval in the set. So we want to take each interval out of the bag at some point.
 
     for i in range(len_table):
         if combine_table[len_table - i - 1]:
-            detections_for_signal[len_table - i - 2][0] = min(
-                detections_for_signal[len_table - i - 1][1],
-                detections_for_signal[len_table - i - 2][0],
+            detections_for_signal[len_table - i-1][0] = min(
+                detections_for_signal[len_table - i - 1][0],
+                detections_for_signal[len_table - i][0],
             )
-            detections_for_signal[len_table - i - 2][1] = max(
+            detections_for_signal[len_table - i-1][1] = max(
                 detections_for_signal[len_table - i - 1][1],
-                detections_for_signal[len_table - i - 2][1],
+                detections_for_signal[len_table - i][1],
             )
-            detections_for_signal.pop(len_table - i - 1)
+            # we want to do longest common interval, for each interval in the set. So we want to take each interval out of the bag at some point.
+            detections_for_signal.pop(len_table - i)
 
 
 # %% [markdown]
@@ -252,9 +253,9 @@ for curr_sig_idx in range(num_real_sigs):
             print("nosel made")
             no_labels += 1
 
-        human_selections[curr_sig_idx].append([selections_indexed_by_labeler[0],selections_indexed_by_labeler[1]])
+        human_selections[curr_sig_idx].append([selections_indexed_by_labeler[0]*(.910),selections_indexed_by_labeler[1]*(0.910)])
 
-    merge_yolo_burst_detections(human_selections[curr_sig_idx])
+    merge_burst_selections(human_selections[curr_sig_idx])
         
 
     onsets[curr_sig_idx] = onsets[curr_sig_idx] / (len(who) - no_labels)
@@ -301,7 +302,7 @@ annotated_images = []
 for i in range(len(all_images)):
     image_path = all_images[i]
     # Predict results for the image
-    results = model.predict(source=image_path, conf=0.25)
+    results = model.predict(source=image_path, conf=0.2)
 
     # Load the image using PIL
     image = Image.open(image_path).convert("RGB")
@@ -323,7 +324,7 @@ for i in range(len(all_images)):
                 pred_offsets[i] = x2
                 yolo_intervals.append([x1, x2])
 
-    merge_yolo_burst_detections(yolo_intervals)
+    merge_burst_selections(yolo_intervals)
 
     print(f"signal {i}")
     for j in range(len(yolo_intervals)):
