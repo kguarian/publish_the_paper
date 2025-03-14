@@ -157,19 +157,19 @@ def generate_training_data_approximator():
 
     for i in range(int(pos_whole_ratio * n_sims)):
         # print(positive_examples[i].shape)
-        res=brute(
-            func=dualthresh_loss(signal=positive_examples[i], ground_truth=ground_truth[i], fs=fs), # this is a call to `loss_fn` in `dualthresh_loss`
-            ranges=((freqs[0], freqs[1]), (freqs[0]+freqs[1], freqs[1]+50), (0, 1), (1, 50)),
-            args=[fs],
-            Ns=30,
-            finish=None,
-        )
-        # res = minimize(
+        # res=brute(
         #     fun=dualthresh_loss(signal=positive_examples[i], ground_truth=ground_truth[i], fs=fs), # this is a call to `loss_fn` in `dualthresh_loss`
-        #     x0=[freqs[0], freqs[1], 0, 1],
+        #     ranges=((freqs[0], freqs[1]), (freqs[0]+freqs[1], freqs[1]+50), (0, 1), (1, 50)),
         #     args=[fs],
-        #     method="Newton-CG",
+        #     Ns=30,
+        #     finish=None,
         # )
+        res = minimize(
+            fun=dualthresh_loss(signal=positive_examples[i], ground_truth=ground_truth[i], fs=fs), # this is a call to `loss_fn` in `dualthresh_loss`
+            x0=[freqs[0], freqs[1], 0, 1],
+            args=[fs],
+            method="L-BFGS-B",
+        )
 
         param_opt.append(res.x)
 
