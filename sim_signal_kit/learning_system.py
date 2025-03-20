@@ -6,24 +6,24 @@ from itertools import count
 
 class Approximator(nn.Module):
     """
-    The Approximator learns to estimate the optimal parameter set θ for a given signal x,
-    such that when passed into a pre-existing model M, the model output M(θ, x) 
+    The Approximator learns to estimate the optimal parameter set for a given signal x,
+    such that when passed into a pre-existing model M like dualthresh, the model output M(params, x) 
     closely matches the expected output y.
 
-    ## **Mathematical Formulation**
+    ## Mathematical Formulation
     Given:
-        - A model **M(θ, x) → y**, where:
+        - A model M(params, x) → y, where:
             - `x` ∈ ℝ^d is an input signal
-            - `θ` ∈ ℝ^p is a set of tunable parameters
+            - `params` ∈ ℝ^p is a set of tunable parameters
             - `y` ∈ ℝ^k is the desired model output
-        - A dataset **D = {(xᵢ, yᵢ)}** where `yᵢ` represents the expected output
+        - A dataset D = {(xᵢ, yᵢ)} where `yᵢ` is the ground truth params.
 
-    When trained, the Approximator is a prediction function A(x) that estimates the optimal parameters θ for a given signal x.
+    When trained, the Approximator is a prediction function A(x) that estimates the optimal params for a given signal x.
     The goal is to run A inside dualthresh so that Dualthresh(x, A(x)) ≈ ground truth.
     
     We M(A(x), x) ≈ y, as optimized by scipy_optimize.minimize with the model.
 
-    We train neural network A(x; ϕ). x is the signal and ϕ are the params. They are passed into separate NNs.
+    We train neural network A(x; params). x is the signal.
     The loss function is the mean squared error (MSE) between the Approximator's param guess and the optimal params.
 
     
