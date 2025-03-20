@@ -7,7 +7,7 @@ import pandas as pd
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.optimize import minimize, brute
+from skopt import gp_minimize
 
 import math
 import os
@@ -17,6 +17,7 @@ from neurodsp.sim.periodic import sim_oscillation
 from neurodsp.sim.aperiodic import sim_powerlaw
 
 from dualthresh_model import DualThreshModel
+from neurodsp.burst import detect_bursts_dual_threshold
 
 # from json_objects_yolov11 import AreaSelection, Annotations, TrainingSample, scale_selection, generate_ml_training_data
 
@@ -25,7 +26,15 @@ from multiprocessing import freeze_support
 from PIL import Image
 
 model = DualThreshModel()
-fs=1000
+fs = 1000
+        
+def convert_to_serializable(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()  # Convert arrays to lists
+    if isinstance(obj, np.int64) or isinstance(obj, np.float32) or isinstance(obj, np.float64):
+        return obj.item()  # Convert NumPy scalars to Python scalars
+    return obj  # Default case
+
 
 def dualthresh_loss(signal, ground_truth, fs):
     """
@@ -54,6 +63,17 @@ def dualthresh_loss(signal, ground_truth, fs):
 
 
 def generate_training_data_approximator():
+    # if the file dualthresh.csv exists, load it with pd.read_csv("dualthresh.csv") and safety checks
+    # if the file does not exist, generate the training data
+
+    if os.path.exists("dualthresh.csv"):
+        with open("dualthresh.csv", "r") as file:
+            data = json.load(file)
+            positive_examples = data[0]
+            param_opt = data[1]
+            ground_truth = data[2]
+            return positive_examples, param_opt, ground_truth
+
     """
     Generate training data for the approximator.
     """
@@ -67,7 +87,7 @@ def generate_training_data_approximator():
     # General
     n_seconds = 2
     fs = 500
-    n_sims = 30
+    n_sims = 1000
     pos_whole_ratio = 0.8
     n_samples = int(n_seconds * fs)
 
@@ -83,8 +103,12 @@ def generate_training_data_approximator():
     # Total number of simulations:
     #   len(list(product(freqs, n_cycles, rdsym, exponents, ratio)))
 
-    positive_examples = np.zeros((int(n_sims*pos_whole_ratio), int(n_seconds * fs)), dtype=np.float32)
-    negative_examples = np.zeros((n_sims-int(n_sims*pos_whole_ratio), int(n_seconds * fs)), dtype=np.float32)
+    positive_examples = np.zeros(
+        (int(n_sims * pos_whole_ratio), int(n_seconds * fs)), dtype=np.float32
+    )
+    negative_examples = np.zeros(
+        (n_sims - int(n_sims * pos_whole_ratio), int(n_seconds * fs)), dtype=np.float32
+    )
 
     # params = enumerate(product(freqs, n_cycles, rdsym, exponents, ratio))
     params = [None] * n_sims
@@ -132,7 +156,7 @@ def generate_training_data_approximator():
         positive_examples[i] = sig
         ground_truth.append([burst_start, burst_start + len(osc)])
 
-        for i in range(n_sims-int(n_sims*pos_whole_ratio)):
+        for i in range(n_sims - int(n_sims * pos_whole_ratio)):
 
             nstime = time.time_ns()
             np.random.seed(nstime % (2**32))
@@ -140,7 +164,8 @@ def generate_training_data_approximator():
             # modified
             _freq = math.floor((np.random.random() * (freqs[1] - freqs[0])) + freqs[0])
             _n_cycles = (
-                math.floor((np.random.rand() * (n_cycles[1] - n_cycles[0]))) + n_cycles[0]
+                math.floor((np.random.rand() * (n_cycles[1] - n_cycles[0])))
+                + n_cycles[0]
             )
 
             _rdsym = (np.random.rand() * (rdsym[1] - rdsym[0])) + rdsym[0]
@@ -154,23 +179,93 @@ def generate_training_data_approximator():
             sig = sig.astype(np.float32)
             negative_examples[i] = sig
 
-
     for i in range(int(pos_whole_ratio * n_sims)):
-        # print(positive_examples[i].shape)
-        # res=brute(
-        #     fun=dualthresh_loss(signal=positive_examples[i], ground_truth=ground_truth[i], fs=fs), # this is a call to `loss_fn` in `dualthresh_loss`
-        #     ranges=((freqs[0], freqs[1]), (freqs[0]+freqs[1], freqs[1]+50), (0, 1), (1, 50)),
-        #     args=[fs],
-        #     Ns=30,
-        #     finish=None,
-        # )
-        res = minimize(
-            fun=dualthresh_loss(signal=positive_examples[i], ground_truth=ground_truth[i], fs=fs), # this is a call to `loss_fn` in `dualthresh_loss`
-            x0=[freqs[0], freqs[1], 0, 1],
-            args=[fs],
-            method="L-BFGS-B",
+        # self-refreshing progress bar. define function then call it with i and n_sims as arguments
+        def printProgressBar(
+            iteration,
+            total,
+            prefix="",
+            suffix="",
+            decimals=1,
+            length=100,
+            fill="█",
+            printEnd="\r",
+        ):
+            # erase previous progress bar
+            percent = ("{0:.1f}").format(100 * (i / float(n_sims * pos_whole_ratio)))
+            filledLength = int(length * i // (n_sims * 0.8))
+            bar = fill * filledLength + "-" * (length - filledLength)
+            print(f"\r{prefix} |{bar}| {percent}% {suffix}", end=printEnd)
+
+        printProgressBar(i, n_sims, prefix="Progress:", suffix="Complete", length=50)
+
+        # Code contributed by Ryan
+        # Function to fit
+        def fit(thresh, thresh_inc, freq, freq_inc, x=None, y=None):
+            y_pred = detect_bursts_dual_threshold(
+                x, 500, (thresh, thresh + thresh_inc), (freq, freq + freq_inc)
+            )
+            loss = (
+                y_pred[: y[0]].sum()
+                + y_pred[y[1] + 1 :].sum()
+                + (1 - y_pred[y[0] : y[1] + 1]).sum()
+            )
+            return loss
+
+        # Optimize for first example:
+        f = lambda params: fit(*params, x=positive_examples[i], y=ground_truth[i])
+
+        res = gp_minimize(
+            f,
+            [(0.1, 2), (0.5, 3), (5, 20), (1, 5)],
+            acq_func="EI",
+            n_calls=15,
+            n_initial_points=50,
+            n_random_starts=5,
+            noise=0.1**2,
+            random_state=1234,
         )
 
+        # Get prediction
+        thresh, thresh_inc, freq, freq_inc = res.x
+        y_pred = detect_bursts_dual_threshold(
+            positive_examples[i],
+            500,
+            (thresh, thresh + thresh_inc),
+            (freq, freq + freq_inc),
+        )
+        # print(y_pred)
+
+        bounds_list = [0, 0]
+        found_onset = False
+        found_offset = False
+        for j in range(len(y_pred)):
+            if not found_onset and y_pred[j] == 1:
+                bounds_list[0] = j
+                found_onset = True
+            if found_onset and not found_offset and y_pred[i] == 0:
+                bounds_list[1] = j
+            if j == len(y_pred) - 1 and found_onset and not found_offset:
+                bounds_list[1] = j
+        bounds = np.array(bounds_list)
+
+        # plt.figure(figsize=(14, 3))
+        # plt.plot(positive_examples[i])
+        # plt.axvline(bounds[0], color='C1', label='predicted')
+        # plt.axvline(bounds[1], color='C1')
+        # plt.axvline(ground_truth[i][0], color='C2')
+        # plt.axvline(ground_truth[i][1], color='C2', label='true')
+        # plt.legend()
+
+        # plt.show()
+        # END CODE CONTRIBUTED BY RYAN
+
+        # bounds = np.array(bounds_list)
         param_opt.append(res.x)
 
-    return positive_examples, param_opt
+    data = [positive_examples.tolist(), param_opt, ground_truth]
+    file = open("dualthresh.csv", "w")
+    json.dump(data, file, default=convert_to_serializable)
+    file.close()
+
+    return positive_examples, param_opt, ground_truth
