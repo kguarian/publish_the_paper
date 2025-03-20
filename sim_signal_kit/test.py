@@ -69,7 +69,7 @@ def test_approximator():
 
     # Initialize and move model to device
     approximator = Approximator(
-        signal_dim=input_shape, param_dim=output_shape, hidden_dim=hidden_dim, lr=0.001
+        signal_dim=input_shape, param_dim=output_shape, hidden_dim=hidden_dim, lr=0.01
     ).to(device)
 
     approximator.train_model(train_loader, num_epochs=20)
@@ -160,7 +160,7 @@ def run_on_dualthresh():
         signal_dim=input_shape, param_dim=output_shape, hidden_dim=hidden_dim, lr=0.0001
     ).to(device)
 
-    ml_approximator.train_model(train_loader, num_epochs=35)
+    ml_approximator.train_model(train_loader, num_epochs=500)
 
     # Move the test data to the device
     # x_test should be signals

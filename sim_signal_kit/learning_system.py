@@ -4,7 +4,8 @@ import torch.optim as optim
 import numpy as np
 from itertools import count
 from neurodsp.burst import detect_bursts_dual_threshold
-
+import matplotlib.pyplot as plt
+from torch.onnx import export
 
 class Approximator(nn.Module):
     """
@@ -48,20 +49,29 @@ class Approximator(nn.Module):
         self.signal_dim = signal_dim
         self.param_dim = param_dim
 
-        # D. Stathakis et al, "How many hidden layers and nodes"
-        first_hidden_dim = int(np.sqrt((param_dim+2)*1000)+2*np.sqrt(1000/(param_dim+2)))
-        second_hidden_dim = int(param_dim*np.sqrt(1000/(param_dim+2)))
+        self.cnn = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
 
-        self.sig_to_param_net = nn.Sequential(
-            nn.Linear(signal_dim, first_hidden_dim),
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Linear(first_hidden_dim, second_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(second_hidden_dim, param_dim),
+            nn.MaxPool1d(kernel_size=2, stride=2)
         )
+
+        self.lstm = nn.LSTM(input_size=32, hidden_size=hidden_dim, batch_first=True)
+        
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_dim, param_dim),
+        )
+
+ 
+        
         # Optimizer and loss function
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        # Scheduler: Reduce LR by 50% if loss plateaus for 5 epochs
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True)
 
     def forward(self, x):
         """
@@ -73,12 +83,16 @@ class Approximator(nn.Module):
         Returns:
         - model_output (Tensor): Output of M(θ, x)
         """
-        param_pred = self.sig_to_param_net(x)
-        # Create a copy and modify only the required parameter
-        param_pred_copy = param_pred.clone()
-        param_pred_copy[:, 0] = torch.nn.functional.softplus(param_pred[:, 0]) + 2  # Ensure output > 2
-
-        return param_pred_copy
+        x = x.unsqueeze(1)  # Add channel dim for CNN (batch, 1, 1000)
+        x = self.cnn(x)  # (batch, 32, reduced_length)
+        
+        x = x.permute(0, 2, 1)  # Change shape for LSTM (batch, seq_len, features)
+        _, (h_n, _) = self.lstm(x)  # h_n is (1, batch, hidden_size)
+        
+        x = h_n.squeeze(0)  # (batch, hidden_size)
+        x = self.fc(x)
+        
+        return x
     
     def predict(self, signal):
         """
@@ -90,15 +104,17 @@ class Approximator(nn.Module):
         Returns:
         - y_pred (Tensor): Model params θ, where M(θ, x) ≈ y. y is the burst selection here.
         """
-        self.eval()
+        self.eval()  # Switch to evaluation mode
         with torch.no_grad():
             if isinstance(signal, np.ndarray):
                 signal = torch.tensor(signal, dtype=torch.float32)
 
-            param_prediction = self.sig_to_param_net(signal)
-            #         # Create a copy and modify only the required parameter
-            # param_pred_copy = param_prediction.clone()
-            # param_pred_copy[:, 0] = torch.nn.functional.softplus(param_prediction[:, 0]) + 2  # Ensure output > 2
+            # Ensure the input signal is in the correct shape, (batch_size, signal_dim)
+            if signal.ndimension() == 1:
+                signal = signal.unsqueeze(0)  # Add batch dimension
+
+            # Forward pass to get predicted parameters
+            param_prediction = self.forward(signal)  # Call the forward function
 
             return param_prediction
 
@@ -115,7 +131,9 @@ class Approximator(nn.Module):
         self.to(device)  # Ensure model is on the correct device
 
         loss_list = np.zeros(num_epochs)
-
+        losses = []
+        best_model = None
+        best_loss = 1e99
         for epoch in range(num_epochs):
         # for epoch in count(0):
             total_loss = 0.0
@@ -133,6 +151,13 @@ class Approximator(nn.Module):
                 total_loss += loss.item()
 
             avg_loss = total_loss / len(train_loader)
+        
+            losses += [avg_loss]
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_model = self.state_dict()
+
+            self.scheduler.step(avg_loss)  # Step the scheduler based on loss
             print(f"Epoch {epoch+1}/{max(num_epochs, epoch)}, Loss: {avg_loss:.6f}")
             if epoch >= loss_list.shape[0]:
                 loss_list = np.append(loss_list, avg_loss)
@@ -142,6 +167,13 @@ class Approximator(nn.Module):
         print("Final loss:", loss_list[-1])
 
         self.eval()  # Switch to evaluation mode
+
+        export(self, torch.randn(1, self.signal_dim).to(next(self.parameters()).device), "sim_signal_kit/approximator.onnx", verbose=True)
+
+        plt.plot(loss_list)
+        plt.xlabel("epoch")
+        plt.ylabel("loss")
+        plt.show()
 
 def mse_dualthresh(signals, y_pred, y_true, fs=1000):
     """
