@@ -2,6 +2,7 @@ from learning_system import Approximator, mse_dualthresh
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+from torch.onnx import export
 
 from dualthresh_model import DualThreshModel
 from sim_signals_dualthresh import generate_training_data_approximator, fs
@@ -136,7 +137,7 @@ def run_on_dualthresh():
     input_shape = x_train.shape[1]
     output_shape = y_train.shape[1]
 
-    hidden_dim = 30
+    hidden_dim = 154
 
     # Move data to the appropriate device
     x_train_tensor = torch.tensor(data=x_train, dtype=torch.float32).to(device)
@@ -155,11 +156,11 @@ def run_on_dualthresh():
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     # Initialize and move model to device
-    approximator = Approximator(
+    ml_approximator = Approximator(
         signal_dim=input_shape, param_dim=output_shape, hidden_dim=hidden_dim, lr=0.0001
     ).to(device)
 
-    approximator.train_model(train_loader, num_epochs=100)
+    ml_approximator.train_model(train_loader, num_epochs=35)
 
     # Move the test data to the device
     # x_test should be signals
@@ -175,23 +176,23 @@ def run_on_dualthresh():
     y_test_tensor = (y_test_ground_truth - y_test_mean) / (y_test_std + 1e-8)
 
     # print(device)
-    y_test_pred = approximator.predict(x_test_tensor)
+    y_test_pred = ml_approximator.predict(x_test_tensor)
 
     # print(f"y_pred shape before reshape: {y_pred.shape}, expected: {y_test_tensor.shape}")
 
     if y_test_pred.shape != y_test_tensor.shape:
         y_test_pred = np.reshape(y_test_pred, y_test_tensor.shape)
 
-    ytt_copy = y_test_tensor.cpu()
+    y_test_usable = y_test_tensor.cpu()
 
     mse = np.mean(
-        np.square(y_test_pred.clone().cpu().numpy() - ytt_copy.clone().cpu().numpy())
+        np.square(y_test_pred.clone().cpu().numpy() - y_test_usable.clone().cpu().numpy())
     )
     # print(y_test_pred.device, y_test_std.device, y_test_mean.device)
     y_pred_denorm = y_test_pred * y_test_std + y_test_mean
     # print(ytt_copy.device, y_test_std.device, y_test_mean.device)
     ytt_copy_denorm = (
-        ytt_copy.clone().cpu().numpy() * y_test_std.clone().cpu().numpy()
+        y_test_usable.clone().cpu().numpy() * y_test_std.clone().cpu().numpy()
         + y_test_mean.clone().cpu().numpy()
     )
     mse2 = mse_dualthresh(
@@ -202,10 +203,9 @@ def run_on_dualthresh():
     print(f"Mean Squared Error 2: {mse2}")
     plt.figure()
 
-    yptccn = y_pred_denorm.clone().cpu().numpy()
     intervals_pred=[]
     for i in range(y_test_pred.shape[0]):
-        print(f"result: {y_test_pred[i]}, expected: {ytt_copy.numpy()[i]}")
+        print(f"result: {y_test_pred[i]}, expected: {y_test_usable.numpy()[i]}")
         assert np.all(y_test_pred[i][j]>=0 for j in range(4)), "All values should be positive"
 
         y_test_true_denormed_numpy = ytt_copy_denorm

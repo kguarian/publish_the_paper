@@ -48,10 +48,16 @@ class Approximator(nn.Module):
         self.signal_dim = signal_dim
         self.param_dim = param_dim
 
+        # D. Stathakis et al, "How many hidden layers and nodes"
+        first_hidden_dim = int(np.sqrt((param_dim+2)*1000)+2*np.sqrt(1000/(param_dim+2)))
+        second_hidden_dim = int(param_dim*np.sqrt(1000/(param_dim+2)))
+
         self.sig_to_param_net = nn.Sequential(
-            nn.Linear(signal_dim, hidden_dim),
+            nn.Linear(signal_dim, first_hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, param_dim),
+            nn.Linear(first_hidden_dim, second_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(second_hidden_dim, param_dim),
         )
         # Optimizer and loss function
         self.criterion = nn.MSELoss()
@@ -152,8 +158,8 @@ def mse_dualthresh(signals, y_pred, y_true, fs=1000):
         yp0 = max(yp0, 2)
         yp1 = max(yp1, 0)
         is_burst = detect_bursts_dual_threshold(signals[i],
-                                                 fs, (max(9,y_pred[i][0]),
-                                                      max(9,y_pred[i][0])+y_pred[i][1]),
+                                                 fs, (max(10,y_pred[i][0]),
+                                                      max(10,y_pred[i][0])+y_pred[i][1]),
                                                       (y_pred[i][2], y_pred[i][2]+y_pred[i][3])
                                                       )
         # Compute loss by using the dualthresh model to predict the intervals
