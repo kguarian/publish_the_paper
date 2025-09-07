@@ -466,7 +466,7 @@ def generate_training_data_approximator(
 
     return positive_examples, param_opt, ground_truth
 
-def fetch_val_data():
+def fetch_real_data():
     # if the file dualthresh.csv exists, load it with pd.read_csv("dualthresh.csv") and safety checks
     # if the file does not exist, generate the training data
 

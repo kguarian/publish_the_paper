@@ -27,7 +27,7 @@ def interval_loss(y_pred: torch.Tensor, y_true: torch.Tensor, penalty: float = 1
     onset_pred, offset_pred = y_pred[:, 0], y_pred[:, 1]
 
     # Invalid case: offset < onset
-    invalid_mask = (offset_pred < onset_pred) or (onset_pred > offset_pred)
+    invalid_mask = (offset_pred < onset_pred) | (onset_pred > offset_pred)
 
     if invalid_mask.any():
         # Add penalty (scaled by number of invalids)
